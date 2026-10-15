@@ -1,5 +1,40 @@
 """Small, testable bounds for upload recovery and reviewed resume options."""
 import re
+from datetime import datetime
+
+
+def management_receipt(cards, title, description, submitted_at):
+    """Bind one native row to this caption/time; never infer approval from presence."""
+    normalize = lambda text: " ".join(str(text or "").replace("\u200b", "").split())
+    expected = normalize(f"{title} {description}")
+    matches = []
+    for card in cards:
+        if normalize(card.get("caption")) != expected:
+            continue
+        try:
+            listed = datetime.strptime(card.get("time", ""), "%Y年%m月%d日 %H:%M")
+        except ValueError:
+            continue
+        # Native timestamps have minute precision. Refuse an older matching post.
+        if not -60 <= (listed - submitted_at).total_seconds() <= 600:
+            continue
+        matches.append(card)
+    if len(matches) != 1:
+        raise ValueError("No unique current Douyin caption/time match; reconcile, never resubmit")
+    card = matches[0]
+    status = normalize(card.get("status"))
+    state = {
+        "已发布": "published", "审核中": "review_pending",
+        "不适宜公开": "restricted", "审核不通过": "rejected",
+        "未通过": "rejected", "仅自己可见": "private",
+    }.get(status, "unknown")
+    return {
+        "submission": "management_verified", "publication_state": state,
+        "native_status": status, "listed_at": card["time"],
+        "title": title, "duration": card.get("duration", ""),
+        "observed_at": datetime.now().isoformat(timespec="seconds"),
+        "retry_safe": False,
+    }
 
 
 def publish_options(content_label="", resume_sha256=""):

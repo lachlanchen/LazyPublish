@@ -6,9 +6,10 @@ import sys
 import tempfile
 import types
 import unittest
+from datetime import datetime
 from unittest.mock import Mock, patch
 
-from douyin_policy import UploadWatch, publish_options, upload_gate
+from douyin_policy import UploadWatch, publish_options, upload_gate, management_receipt
 
 utils = types.ModuleType("utils")
 for name in ("dismiss_alert", "bring_to_front", "close_extra_tabs", "safe_get"):
@@ -22,6 +23,24 @@ with patch.dict(sys.modules, {"utils": utils, "login_douyin": login}):
 
 
 class PolicyTests(unittest.TestCase):
+    def test_receipt_distinguishes_submission_and_publication(self):
+        row = {"caption": "A title The description", "time": "2026年10月16日 00:08", "duration": "00:50"}
+        for status, state in (("审核中", "review_pending"), ("已发布", "published"),
+                              ("不适宜公开", "restricted"), ("未通过", "rejected"),
+                              ("仅自己可见", "private"), ("new unknown status", "unknown")):
+            receipt = management_receipt([{**row, "status": status}], "A title", "The description",
+                                         datetime(2026, 10, 16, 0, 8, 45))
+            self.assertEqual(receipt["publication_state"], state)
+            self.assertFalse(receipt["retry_safe"])
+
+    def test_old_wrong_caption_and_ambiguous_rows_cannot_confirm_new_post(self):
+        row = {"caption": "A title The description", "time": "2026年10月16日 00:08", "status": "已发布"}
+        for rows in ([{**row, "time": "2026年10月15日 00:08"}],
+                     [{**row, "caption": "A title Another description"}],
+                     [{**row, "time": "unknown"}], [row, row], []):
+            with self.assertRaises(ValueError):
+                management_receipt(rows, "A title", "The description", datetime(2026, 10, 16, 0, 8))
+
     def test_options_are_bounded_and_exact(self):
         self.assertEqual(publish_options(), {"content_label": "", "resume_sha256": ""})
         self.assertEqual(publish_options("ai_generated", "a" * 64)["resume_sha256"], "a" * 64)
@@ -119,6 +138,7 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaises(module.PublishVerificationException):
             p._click_publish_button()
         self.assertTrue(p._submit_attempted)
+        self.assertFalse(p.publication_receipt["retry_safe"])
         self.assertEqual(p.driver.execute_script.call_count, 1)
         p._click_first.assert_not_called()
 
@@ -149,6 +169,7 @@ class FlowTests(unittest.TestCase):
             p._submit_attempted = True
         p._click_publish_button = Mock(side_effect=click)
         p._wait_for_publish_submit_result = Mock(return_value=True)
+        p._management_receipt = Mock(return_value={"publication_state": "review_pending", "retry_safe": False})
         return p
 
     def test_test_mode_does_not_block_for_input_or_report_publication(self):
@@ -181,6 +202,15 @@ class FlowTests(unittest.TestCase):
             self.assertTrue(p.publish())
         verify.assert_called_once()
         p._click_publish_button.assert_called_once()
+
+    def test_native_restriction_is_not_success_or_retried(self):
+        p = self.ready_publisher()
+        p._management_receipt.return_value = {"publication_state": "restricted", "retry_safe": False}
+        with patch.object(module.time, "sleep"), patch.object(module, "verify_publish_in_management", return_value=True):
+            with self.assertRaisesRegex(module.PublishVerificationException, "restricted"):
+                p.publish()
+        p._click_publish_button.assert_called_once()
+        self.assertFalse(p.publication_receipt["retry_safe"])
 
     def test_unbound_ready_upload_is_replaced(self):
         p = self.ready_publisher()

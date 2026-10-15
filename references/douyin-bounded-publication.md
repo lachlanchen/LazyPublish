@@ -4,6 +4,20 @@ Separate media transfer, form readiness, submission, and moderation. A logged-in
 editor or successful upload is not a published post. A queue `done` row confirms
 native submission and management readback, not approval by platform moderators.
 
+The per-platform result also includes `publication_receipt` for Douyin:
+`publication_state` is `review_pending`, `published`, `restricted`, `rejected`,
+`private`, or `unknown`. Read this field, not just worker `status=done`.
+`retry_safe=false` remains set after any attempted final click, including a lost
+response. A restricted post must not be reuploaded or edited speculatively to
+evade moderation. Inspect the native reason and use the normal review/appeal path.
+
+Receipt matching requires the full approved title + caption and a unique native
+timestamp within this submission window. Old same-title posts and ambiguous
+duplicates cannot confirm a new post. Native moderation may change later: the
+record includes `observed_at` and is not a continuing guarantee of availability.
+Before reporting a post live, refresh the native management row and verify its
+current status. A later restriction supersedes an earlier pending receipt.
+
 ## Recovery rules
 
 - An explicit upload failure gets at most one media-only retry in the same

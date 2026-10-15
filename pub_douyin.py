@@ -17,11 +17,12 @@ import traceback
 import os
 import json
 import hashlib
+from datetime import datetime
 from urllib.parse import urlsplit
 
 from publish_verification import verify_publish_in_management
 from douyin_submit import submit_outcome, upload_outcome, upload_progress
-from douyin_policy import UploadWatch, upload_gate, publish_options
+from douyin_policy import UploadWatch, upload_gate, publish_options, management_receipt
 
 
 DOUYIN_MANAGEMENT_URL = "https://creator.douyin.com/creator-micro/content/manage"
@@ -49,6 +50,7 @@ class DouyinPublisher:
         self.test = test
         self.retry_count = 0  # initialize retry count
         self._submit_attempted = False
+        self.publication_receipt = None
 
         if self._verified_editor():
             print("Reusing the reviewed ready Douyin editor without navigating away.")
@@ -60,6 +62,17 @@ class DouyinPublisher:
         return (self._allow_draft_reuse()
                 and urlsplit(self.driver.current_url).path == "/creator-micro/content/post/video"
                 and upload_outcome(self._body_text()) == "ready")
+
+    def _management_receipt(self, title, description, submitted_at):
+        cards = self.driver.execute_script("""
+          return Array.from(document.querySelectorAll('[class*="video-card-info-"]')).map(info => ({
+            caption: info.querySelector('[class*="info-title-text-"]')?.innerText || '',
+            time: info.querySelector('[class*="info-time-"]')?.innerText || '',
+            status: info.querySelector('[class*="info-status-"]')?.innerText || '',
+            duration: info.parentElement.querySelector('[class*="badge-"]')?.innerText || ''
+          }));
+        """)
+        return management_receipt(cards, title, description, submitted_at)
 
     def _find_first(self, xpaths, timeout=20, visible=True):
         condition = EC.visibility_of_element_located if visible else EC.presence_of_element_located
@@ -607,6 +620,10 @@ class DouyinPublisher:
             raise PublishVerificationException("A publish click was already attempted; reconcile management first")
         # Mark before dispatch: even a lost CDP response can mean the click landed.
         self._submit_attempted = True
+        self.publication_receipt = {
+            "submission": "attempted", "publication_state": "unknown",
+            "retry_safe": False, "observed_at": datetime.now().isoformat(timespec="seconds"),
+        }
         script = """
         const norm = text => (text || '').replace(/\\s+/g, ' ').trim();
         const visible = el => {
@@ -848,6 +865,7 @@ class DouyinPublisher:
                 print("Entering the title...")
                 title_input_element = self._find_first(
                     [
+                        '//input[@placeholder="填写作品标题，为作品获得更多流量"]',
                         '//input[@placeholder="好的作品标题可获得更多浏览"]',
                         '//input[contains(@placeholder,"标题")]',
                         '//div[contains(@class,"title") or contains(@class,"Title")]//input',
@@ -960,6 +978,7 @@ class DouyinPublisher:
                 if user_input == 'yes':
                     print("Publishing the video...")
                     time.sleep(3)
+                    submitted_at = datetime.now()
                     self._click_publish_button()
                     self._wait_for_publish_submit_result(
                         timeout=int(os.environ.get("AUTOPUB_DOUYIN_SUBMIT_TIMEOUT", "180"))
@@ -980,11 +999,17 @@ class DouyinPublisher:
                                 '//*[contains(normalize-space(),"全部作品")]',
                             ],
                         )
+                        self.publication_receipt = self._management_receipt(
+                            title_text, description_with_tags[:1000], submitted_at)
                     except Exception as exc:
                         raise PublishVerificationException(
                             "Submit accepted, but management confirmation is pending; do not resubmit"
                         ) from exc
-                    print("Video published successfully!")
+                    state = self.publication_receipt["publication_state"]
+                    print(f"Douyin native submission verified; publication state: {state}")
+                    if state in {"restricted", "rejected", "private"}:
+                        raise PublishVerificationException(
+                            f"Douyin native state is {state}; inspect reason, do not reupload")
                 else:
                     print("Publishing cancelled by the user.")
                 

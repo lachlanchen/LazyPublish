@@ -781,7 +781,11 @@ def publish_platform(publisher, platform_name):
             result = publisher.publish()
         if result is False:
             raise RuntimeError(f"{platform_name} publisher returned unsuccessful status")
-        print(f"Successfully published on {platform_name}.")
+        receipt = getattr(publisher, "publication_receipt", None)
+        if isinstance(receipt, dict):
+            print(f"{platform_name} submission verified; native state: {receipt.get('publication_state')}")
+        else:
+            print(f"Successfully published on {platform_name}.")
         return 1
     except Exception as e:
         print(f"Failed to publish on {platform_name}: {e}")

@@ -1,10 +1,24 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 from publish_batch import publish_batch
 
 
 class PublishBatchTests(unittest.TestCase):
+    def test_moderation_receipt_is_kept_separate_from_done(self):
+        p = SimpleNamespace(publication_receipt={"publication_state": "review_pending", "retry_safe": False})
+        result = publish_batch([(p, "Douyin")], lambda *_: True)
+        self.assertEqual(result["Douyin"]["status"], "done")
+        self.assertEqual(result["Douyin"]["publication_receipt"]["publication_state"], "review_pending")
+
+    def test_post_submit_failure_does_not_recommend_retry(self):
+        p = SimpleNamespace(publication_receipt={"publication_state": "restricted", "retry_safe": False})
+        record = Mock()
+        with self.assertRaisesRegex(RuntimeError, "do not retry: Douyin"):
+            publish_batch([(p, "Douyin")], Mock(side_effect=RuntimeError("restricted")), on_result=record)
+        self.assertEqual(record.call_args.args[1]["publication_receipt"]["publication_state"], "restricted")
+
     def test_failed_upload_does_not_block_other_platforms(self):
         record = Mock()
         publish = Mock(side_effect=[RuntimeError("upload failed"), True, True])
