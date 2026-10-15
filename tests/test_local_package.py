@@ -19,6 +19,7 @@ import tornado.testing
 
 from local_package import checksum, clean_scratch, resolve_package
 from publish_package import store_publish_package, validate_archive
+from douyin_policy import publish_options as douyin_publish_options
 
 
 def valid_zip(text='reviewed metadata'):
@@ -113,6 +114,7 @@ class TestLocalPackageEndpoint(tornado.testing.AsyncHTTPTestCase):
                    'store_publish_package': store, 'validate_archive': validate_archive,
                    'PUBLISH_LOCK': threading.Lock(), 'PUBLISH_JOBS': self.registry,
                    'PUBLISH_ACCEPTING': self.accepting,
+                   'douyin_publish_options': douyin_publish_options,
                    '_enqueue_publish_job': enqueue, 'PUBLISH_QUEUE': queue.Queue(),
                    '_job_timestamp': lambda: 'test'}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), 'app.py', 'exec'), context)
@@ -138,6 +140,22 @@ class TestLocalPackageEndpoint(tornado.testing.AsyncHTTPTestCase):
         assert self.jobs[0]['local_package'] is False
         assert Path(self.jobs[0]['zip_path']).read_bytes() == body
         assert self.jobs[0]['package_sha256'] == hashlib.sha256(body).hexdigest()
+
+    def test_douyin_recovery_options_are_kept_on_exact_job(self):
+        options = {'filename': 'video.zip', 'publish_douyin': 'true',
+                   'douyin_content_label': 'ai_generated', 'douyin_resume_sha256': 'a' * 64}
+        response = self.fetch('/publish?' + urlencode(options), method='POST', body=valid_zip())
+        assert response.code == 200
+        assert self.jobs[0]['douyin_options'] == {'content_label': 'ai_generated', 'resume_sha256': 'a' * 64}
+        assert self.jobs[0]['platforms'] == ['douyin']
+
+    def test_invalid_recovery_options_rejected_before_staging(self):
+        for options in ({'douyin_content_label': 'fake'}, {'douyin_resume_sha256': 'not-a-hash'}):
+            response = self.fetch('/publish?' + urlencode({'filename': 'video.zip', **options}),
+                                  method='POST', body=valid_zip())
+            assert response.code == 400
+            assert not self.jobs
+            assert not list(self.root.rglob('*.zip'))
 
     def test_malformed_retry_is_400_without_overwriting_or_queueing(self):
         package = self.root / 'publisher' / 'video' / 'video.zip'

@@ -52,6 +52,7 @@ from publish_package import extracted_members_current, store_publish_package, va
 from local_package import resolve_package, checksum, clean_scratch
 from published_retention import cleanup_published
 from browser_asset_cache import shipinhao_assets
+from douyin_policy import publish_options as douyin_publish_options
 
 
 # Add this import
@@ -948,7 +949,8 @@ def _process_publish_job(job):
         pub_xhslisher = XiaoHongShuPublisher(_driver_for("XiaoHongShu", 5003), path_mp4, path_cover, metadata_china, test_mode)
         publishers.append((pub_xhslisher, 'XiaoHongShu'))
     if publish_douyin:
-        pub_douyinlisher = DouyinPublisher(_driver_for("Douyin", 5004), path_mp4, path_cover, metadata_china, test_mode)
+        douyin_metadata = {**metadata_china, "_douyin_options": douyin_publish_options(**job.get("douyin_options", {}))}
+        pub_douyinlisher = DouyinPublisher(_driver_for("Douyin", 5004), path_mp4, path_cover, douyin_metadata, test_mode)
         publishers.append((pub_douyinlisher, 'Douyin'))
     if publish_bilibili:
         pub_bilibililisher = BilibiliPublisher(_driver_for("Bilibili", 5005), path_mp4, path_cover, metadata_china, test_mode)
@@ -1192,6 +1194,13 @@ class PublishHandler(tornado.web.RequestHandler):
             self.get_argument('force_browser_restart', self.get_argument('force_restart', 'false'))
         )
         restart_platforms = _parse_restart_platforms(self.get_argument('restart_platforms', ''))
+        try:
+            douyin_options = douyin_publish_options(
+                self.get_argument('douyin_content_label', ''),
+                self.get_argument('douyin_resume_sha256', ''),
+            )
+        except ValueError as exc:
+            raise tornado.web.HTTPError(400, str(exc))
 
         # Define ignore files
         ignore_files = {
@@ -1322,6 +1331,7 @@ class PublishHandler(tornado.web.RequestHandler):
             "publish_instagram": publish_instagram,
             "test_mode": test_mode,
             "reuse_existing": reuse_existing,
+            "douyin_options": douyin_options,
             "platforms": platforms,
             "force_browser_restart": force_browser_restart,
             "restart_platforms": sorted(restart_platforms),

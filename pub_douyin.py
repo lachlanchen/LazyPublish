@@ -16,9 +16,12 @@ from login_douyin import DouyinLogin
 import traceback
 import os
 import json
+import hashlib
+from urllib.parse import urlsplit
 
 from publish_verification import verify_publish_in_management
 from douyin_submit import submit_outcome, upload_outcome, upload_progress
+from douyin_policy import UploadWatch, upload_gate, publish_options
 
 
 DOUYIN_MANAGEMENT_URL = "https://creator.douyin.com/creator-micro/content/manage"
@@ -45,9 +48,18 @@ class DouyinPublisher:
         self.metadata = metadata
         self.test = test
         self.retry_count = 0  # initialize retry count
+        self._submit_attempted = False
 
-        douyin_login = DouyinLogin(driver)
-        douyin_login.check_and_act()
+        if self._verified_editor():
+            print("Reusing the reviewed ready Douyin editor without navigating away.")
+        else:
+            douyin_login = DouyinLogin(driver)
+            douyin_login.check_and_act()
+
+    def _verified_editor(self):
+        return (self._allow_draft_reuse()
+                and urlsplit(self.driver.current_url).path == "/creator-micro/content/post/video"
+                and upload_outcome(self._body_text()) == "ready")
 
     def _find_first(self, xpaths, timeout=20, visible=True):
         condition = EC.visibility_of_element_located if visible else EC.presence_of_element_located
@@ -475,12 +487,78 @@ class DouyinPublisher:
         raise UploadInputMissingException(f"Douyin draft did not enter the editor; inspect {base}.*")
 
     def _allow_draft_reuse(self):
-        return os.environ.get("AUTOPUB_DOUYIN_REUSE_DRAFT", "0").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+        options = publish_options(**self.metadata.get("_douyin_options", {}))
+        expected = options["resume_sha256"]
+        if expected:
+            digest = hashlib.sha256()
+            with open(self.path_mp4, "rb") as source:
+                for block in iter(lambda: source.read(1024 * 1024), b""):
+                    digest.update(block)
+            if digest.hexdigest() != expected:
+                raise ValueError("Reviewed Douyin upload does not match this package's video")
+            return True
+        if os.environ.get("AUTOPUB_DOUYIN_REUSE_DRAFT", "0").lower() in {"1", "true", "yes", "on"}:
+            raise ValueError("Unbound draft reuse disabled; provide the reviewed upload SHA-256 per job")
+        return False
+
+    def _wait_for_upload(self, upload_started_at=None):
+        """Retry only one explicit failed upload, never the publication workflow."""
+        watch = UploadWatch(time.monotonic(),
+                            idle_seconds=int(os.environ.get("AUTOPUB_DOUYIN_UPLOAD_IDLE_TIMEOUT", "180")))
+        grace = int(os.environ.get("AUTOPUB_DOUYIN_STALE_FAILURE_GRACE", "45"))
+        retries = 0
+        last_log = 0
+        while True:
+            body = self._body_text()
+            gate = upload_gate(body)
+            if gate:
+                raise UploadFailedException(f"Douyin requires operator attention: {gate}")
+            progress = upload_progress(body)
+            now = time.monotonic()
+            if now - last_log >= 30:
+                print(f"Douyin upload progress: {json.dumps(progress, ensure_ascii=False)}")
+                last_log = now
+            if progress["status"] == "ready":
+                print("Douyin native upload completion confirmed.")
+                return
+            if progress["status"] == "failed":
+                if upload_started_at and time.time() - upload_started_at < grace:
+                    time.sleep(5)
+                    continue
+                base, _ = self._save_upload_debug_snapshot("upload_failed")
+                if retries == 0 and not getattr(self, "_submit_attempted", False):
+                    retries += 1
+                    print(f"Retrying failed media upload once, in the same editor; evidence={base}.*")
+                    time.sleep(10)
+                    upload_started_at = self._upload_video_file(self.path_mp4)
+                    watch = UploadWatch(time.monotonic(), idle_seconds=watch.idle_seconds)
+                    continue
+                raise UploadFailedException(f"Douyin upload failed after bounded recovery; evidence={base}.*")
+            reason = watch.observe(progress, now)
+            if reason:
+                base, _ = self._save_upload_debug_snapshot("upload_stalled")
+                raise UploadFailedException(f"{reason}; no blind retry of pending upload; evidence={base}.*")
+            time.sleep(5)
+
+    def _set_content_label(self):
+        options = publish_options(**self.metadata.get("_douyin_options", {}))
+        if not options["content_label"]:
+            return
+        label = "内容由AI生成"
+        current = self.driver.execute_script("""
+          return Array.from(document.querySelectorAll('[class*="selectText-"]'))
+            .some(e => e.getClientRects().length && e.textContent.trim() === arguments[0]);
+        """, label)
+        if current:
+            return
+        self._click_first(['//*[normalize-space(text())="请选择自主声明"]'], timeout=10)
+        self._click_first(['//div[contains(@class,"semi-modal-content")]//label[.//span[normalize-space()="内容由AI生成"]]'], timeout=10)
+        self._click_first(['//div[contains(@class,"semi-modal-content")]//button[normalize-space()="确定"]'], timeout=10)
+        WebDriverWait(self.driver, 10).until(lambda d: d.execute_script("""
+          return Array.from(document.querySelectorAll('[class*="selectText-"]'))
+            .some(e => e.getClientRects().length && e.textContent.trim() === arguments[0]);
+        """, label))
+        print("Verified Douyin native declaration: 内容由AI生成")
 
     def _replace_existing_draft_video(self, path_mp4):
         """Replace a resumed Douyin draft instead of publishing stale uploaded media."""
@@ -525,6 +603,10 @@ class DouyinPublisher:
         return time.time()
 
     def _click_publish_button(self):
+        if getattr(self, "_submit_attempted", False):
+            raise PublishVerificationException("A publish click was already attempted; reconcile management first")
+        # Mark before dispatch: even a lost CDP response can mean the click landed.
+        self._submit_attempted = True
         script = """
         const norm = text => (text || '').replace(/\\s+/g, ' ').trim();
         const visible = el => {
@@ -566,29 +648,28 @@ class DouyinPublisher:
                 print(f"Clicked Douyin publish button: {result}")
                 return
         except Exception as exc:
-            print(f"Douyin JavaScript publish button click failed: {exc}")
-
-        self._click_first(
-            [
-                '//button[normalize-space()="发布" and not(@disabled)]',
-                '//button[.//*[normalize-space()="发布"] and not(@disabled)]',
-                '//button[contains(normalize-space(.),"立即发布") and not(@disabled)]',
-                '//button[contains(normalize-space(.),"确认发布") and not(@disabled)]',
-            ],
-            timeout=20,
-        )
+            raise PublishVerificationException("Publish click outcome unknown; no fallback click") from exc
+        raise PublishVerificationException("No unambiguous publish control; inspect before retrying")
 
     def _click_publish_confirm_if_present(self):
-        return self._click_any(
-            [
-                '//button[normalize-space()="确认发布"]',
-                '//button[normalize-space()="确认"]',
-                '//button[normalize-space()="确定"]',
-                '//button[contains(normalize-space(.),"继续发布")]',
-                '//*[contains(normalize-space(.),"确认发布")]/ancestor::button[1]',
-            ],
-            timeout=2,
-        )
+        # Never click arbitrary page-wide 确定/确认 controls or repeat a dialog.
+        key = self.driver.execute_script("""
+          const visible = e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';
+          const dialogs = Array.from(document.querySelectorAll('[role="dialog"],.semi-modal-content'))
+            .filter(e => visible(e) && /发布/.test(e.innerText) && !/添加声明/.test(e.innerText));
+          for (const dialog of dialogs) {
+            const buttons = Array.from(dialog.querySelectorAll('button')).filter(e => visible(e)
+              && !e.disabled && ['确认发布','继续发布','确定','确认'].includes(e.innerText.trim()));
+            if (buttons.length !== 1) continue;
+            const key = dialog.innerText.trim();
+            if (key === arguments[0]) return null;
+            buttons[0].click(); return key;
+          }
+          return null;
+        """, getattr(self, "_confirmed_dialog", ""))
+        if key:
+            self._confirmed_dialog = key
+        return bool(key)
 
     def _wait_for_publish_submit_result(self, timeout=180):
         deadline = time.time() + timeout
@@ -724,7 +805,9 @@ class DouyinPublisher:
 
 
     def publish(self):
-        if self.retry_count < 3:  # maximum 3 tries (initial + 2 retries)
+        if getattr(self, "_submit_attempted", False):
+            raise PublishVerificationException("Submission was already attempted; do not replay")
+        if self.retry_count < 3:  # legacy adapter compatibility; no recursive whole-job retry
             try:
                 driver = self.driver
                 path_mp4 = self.path_mp4
@@ -733,10 +816,11 @@ class DouyinPublisher:
                 test = self.test
 
                 print("Starting the publishing process on Douyin...")
-                safe_get(driver, "https://creator.douyin.com/creator-micro/content/upload", timeout=45, label="Douyin upload page")
-                time.sleep(1)
-                dismiss_alert(driver)
-                time.sleep(10)
+                if not self._verified_editor():
+                    safe_get(driver, "https://creator.douyin.com/creator-micro/content/upload", timeout=45, label="Douyin upload page")
+                    time.sleep(1)
+                    dismiss_alert(driver)
+                    time.sleep(10)
 
                 bring_to_front(["抖音"])  # This should be defined somewhere in your code
                 close_extra_tabs(driver)
@@ -748,48 +832,14 @@ class DouyinPublisher:
                 if draft_upload_failed:
                     print("Existing Douyin draft has a failed upload; reuploading inside the draft.")
                     upload_started_at = self._upload_video_file(path_mp4)
-                elif resumed_draft and not allow_draft_reuse:
+                elif (resumed_draft or upload_outcome(self._body_text()) == "ready") and not allow_draft_reuse:
                     upload_started_at = self._replace_existing_draft_video(path_mp4)
-                elif resumed_draft or upload_outcome(self._body_text()) == "ready":
+                elif allow_draft_reuse and (resumed_draft or upload_outcome(self._body_text()) == "ready"):
                     print("Using existing Douyin draft/upload; skipping video upload.")
                 else:
                     upload_started_at = self._upload_video_file(path_mp4)
 
-                print("Waiting for the video to be uploaded...")
-                time.sleep(3)
-                # WebDriverWait(driver, 3600).until(EC.presence_of_element_located((By.XPATH, '//*[text()="重新上传"]')))
-                start_time = time.time()
-                timeout = 3600  # 3600 seconds timeout
-                stale_failure_grace = int(os.environ.get("AUTOPUB_DOUYIN_STALE_FAILURE_GRACE", "45"))
-                last_progress_log = 0
-                
-                while True:
-                    if time.time() - start_time > timeout:
-                        raise Exception("Timeout reached while waiting for video to be uploaded or for a failure message.")
-
-                    # Inspect failure/progress/completion atomically. The old
-                    # presence-only XPath could match hidden controls or the
-                    # "重新上传" substring inside an upload-failed message.
-                    progress = upload_progress(self._body_text())
-                    upload_state = progress["status"]
-                    if time.time() - last_progress_log >= 30:
-                        print(f"Douyin upload progress: {json.dumps(progress, ensure_ascii=False)}")
-                        last_progress_log = time.time()
-                    if upload_state == "failed":
-                        if upload_started_at and time.time() - upload_started_at < stale_failure_grace:
-                            print("Ignoring possible stale Douyin upload failure indicator from the previous draft state.")
-                            time.sleep(5)
-                            continue
-                        base, _ = self._save_upload_debug_snapshot("upload_failed")
-                        raise UploadFailedException(
-                            f"Douyin reported upload failure; progress={progress}; evidence={base}.*"
-                        )
-
-                    if upload_state == "ready":
-                        print("Video upload prompt detected, indicating upload completion.")
-                        break
-
-                    time.sleep(5)  # Wait a bit before checking again
+                self._wait_for_upload(upload_started_at)
 
                 print("Skipping cover upload for Douyin.")
                 time.sleep(2)
@@ -824,33 +874,24 @@ class DouyinPublisher:
                 # Douyin's separate topic widget is optional and can wedge the
                 # browser on send_keys. Keep hashtags in the description, which
                 # is enough for publishing and avoids blocking the queue.
-                topics_added = False
-                extra_tags = ["上热门", "dou上热门", "我要上热门"]
-                if topics_added:
-                    combined_tags = extra_tags
-                else:
-                    combined_tags = tags + extra_tags
+                combined_tags = tags
                 description_text = (metadata.get("long_description") or metadata.get("brief_description") or "").strip()
                 tag_text = " ".join([f"#{tag}" for tag in combined_tags if tag])
                 description_with_tags = f"{description_text} {tag_text}".strip()
                 time.sleep(1)
                 self._set_text(description_input_element, description_with_tags[:1000])
+                actual = self.driver.execute_script("""
+                  return {title: arguments[0].value,
+                    description: arguments[1].value ?? arguments[1].innerText};
+                """, title_input_element, description_input_element)
+                normalize = lambda value: " ".join(str(value or "").replace("\u200b", "").split())
+                if (normalize(actual.get("title")) != normalize(title_text)
+                        or normalize(actual.get("description")) != normalize(description_with_tags[:1000])):
+                    raise RuntimeError("Douyin title/description readback mismatch; not submitting")
 
 
-                try:
-                    print("Entering location information...")
-                    time.sleep(3)
-                    # wait_for_element_to_be_clickable(driver, '//*[text()="输入地理位置"]')
-                    driver.find_element(By.XPATH, '//*[text()="输入地理位置"]').click()
-                    time.sleep(3)
-                    # wait_for_element_to_be_clickable(driver, '//*[text()="输入地理位置"]/..//input')
-                    driver.find_element(By.XPATH, '//*[text()="输入地理位置"]/..//input').send_keys("香港大学")
-                    time.sleep(3)
-                    # wait_for_element_to_be_clickable(driver, '//*[@class="semi-popover-content"]//*[text()="香港大学"]')
-                    driver.find_element(By.XPATH, '//*[@class="semi-popover-content"]//*[text()="香港大学"]').click()
-                except:
-                    print("Cannot select location!")
-                    pass
+                # Never invent a filming location or add unrelated engagement tags.
+                self._set_content_label()
 
 
                 
@@ -912,14 +953,15 @@ class DouyinPublisher:
 
                 # Final steps for publishing
                 if test:
-                    user_input = input("Do you want to publish now? Type 'yes' to confirm: ").strip().lower()
+                    print("Douyin test mode: prepared only; no final submit and not published.")
+                    return False
                 else:
                     user_input = "yes"
                 if user_input == 'yes':
                     print("Publishing the video...")
                     time.sleep(3)
                     self._click_publish_button()
-                    submit_confirmed = self._wait_for_publish_submit_result(
+                    self._wait_for_publish_submit_result(
                         timeout=int(os.environ.get("AUTOPUB_DOUYIN_SUBMIT_TIMEOUT", "180"))
                     )
                     try:
@@ -939,15 +981,9 @@ class DouyinPublisher:
                             ],
                         )
                     except Exception as exc:
-                        if submit_confirmed:
-                            print(
-                                "Douyin submit was accepted, but management verification did not "
-                                f"index the post yet: {exc}"
-                            )
-                            print("Treating Douyin publish as successful after accepted submit.")
-                            self.retry_count = 0
-                            return True
-                        raise PublishVerificationException(str(exc)) from exc
+                        raise PublishVerificationException(
+                            "Submit accepted, but management confirmation is pending; do not resubmit"
+                        ) from exc
                     print("Video published successfully!")
                 else:
                     print("Publishing cancelled by the user.")
@@ -965,9 +1001,13 @@ class DouyinPublisher:
             except Exception as e:
                 print(f"An error occurred: {e}")
                 traceback.print_exc()
-                self.retry_count += 1
-                print(f"Retrying the whole process... Attempt {self.retry_count}")
-                return self.publish()  # Retry the whole process
+                if getattr(self, "_submit_attempted", False):
+                    raise PublishVerificationException(
+                        "Failure after final-click barrier; inspect management, never replay the job"
+                    ) from e
+                # Upload-only recovery is bounded inside _wait_for_upload.
+                # Form, authentication and transport ambiguity never restart a whole post.
+                raise
         else:
             raise RuntimeError("Maximum retry attempts reached. Douyin process failed.")
 
