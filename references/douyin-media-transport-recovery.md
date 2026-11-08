@@ -58,6 +58,13 @@ The helper bounds concurrency, headers, connection setup, inactivity and tunnel
 lifetime. It does not establish that every future CDN hostname or network route
 will work. Reconcile failures before retrying and retain the native outcome.
 
+The connection limit is 32. Chromium may retain several connections per media
+host while contacting additional upload hosts; the previous eight-connection
+limit could silently drop valid parallel requests. Excess connections now get
+HTTP 503 and a `capacity_rejected` log entry. A loopback regression opens 32
+opaque TLS-style streams, verifies byte transport, and checks the overflow bound.
+This fixes relay capacity; it does not prove the cause of a native upload failure.
+
 ## Distinct editions and YouTube drafts
 
 A same-title private draft can contain another edition of the media. Before

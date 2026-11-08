@@ -8,6 +8,8 @@ import asyncio
 import json
 import re
 
+MAX_CONNECTIONS = 32
+
 
 def parse_target(authority, targets):
     match = re.fullmatch(r'([a-zA-Z0-9.-]+):443', authority)
@@ -86,7 +88,10 @@ async def serve(targets, port):
     active = set()
 
     async def bounded(reader, writer):
-        if len(active) >= 8:
+        if len(active) >= MAX_CONNECTIONS:
+            print(json.dumps({'event': 'capacity_rejected', 'limit': MAX_CONNECTIONS}), flush=True)
+            writer.write(b'HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+            await writer.drain()
             writer.close()
             await writer.wait_closed()
             return

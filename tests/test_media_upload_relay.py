@@ -1,4 +1,6 @@
 import asyncio
+from pathlib import Path
+import sys
 import unittest
 from scripts.media_upload_relay import handle, pac, parse_target
 
@@ -83,6 +85,44 @@ class RelayTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(b'403 Forbidden', await r.read())
                 w.close()
                 await w.wait_closed()
+
+    async def test_parallel_media_connections_do_not_exhaust_relay(self):
+        # Chromium can retain six connections per media host, plus requests
+        # to additional upload hosts. The old eight-slot relay dropped these.
+        reservation = await asyncio.start_server(lambda r, w: w.close(), '127.0.0.1', 0)
+        port = reservation.sockets[0].getsockname()[1]
+        reservation.close()
+        await reservation.wait_closed()
+        script = Path(__file__).resolve().parents[1] / 'scripts/media_upload_relay.py'
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, '-u', str(script), '--port', str(port),
+            '--upstream', f'media.example.test={self.targets["media.example.test"]}',
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        )
+        clients = []
+        try:
+            self.assertIn(b'listening', await asyncio.wait_for(process.stdout.readline(), 5))
+            for index in range(32):
+                reader, writer = await asyncio.open_connection('127.0.0.1', port)
+                clients.append(writer)
+                writer.write(b'CONNECT media.example.test:443 HTTP/1.1\r\n\r\n')
+                await writer.drain()
+                response = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), 3)
+                self.assertIn(b'200 Connection Established', response)
+                payload = f'opaque-{index}'.encode()
+                writer.write(payload)
+                await writer.drain()
+                self.assertEqual(await asyncio.wait_for(reader.readexactly(len(payload)), 3), payload)
+            reader, writer = await asyncio.open_connection('127.0.0.1', port)
+            clients.append(writer)
+            self.assertIn(b'503 Service Unavailable', await asyncio.wait_for(reader.read(), 3))
+        finally:
+            for writer in clients:
+                writer.close()
+                await writer.wait_closed()
+            if process.returncode is None:
+                process.terminate()
+            await asyncio.wait_for(process.wait(), 5)
 
 
 if __name__ == '__main__':
