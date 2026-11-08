@@ -9,6 +9,22 @@ elapsed time and error type. Signed URLs, cookies and request bodies stay privat
 Check the native upload progress and TCP retransmissions. Do not repeatedly
 publish or replace the video to test a network hypothesis.
 
+The page-level diagnostic can miss transfers made by dedicated Web Workers.
+Successful preparation requests are not evidence that the media chunks arrived.
+When the visible byte counter stalls, inspect the browser's `Target.getTargets`
+worker entries, attach read-only sessions with `flatten=true`, and enable
+`Network` on those sessions without pausing execution. Track requests by both
+session ID and request ID; detach the diagnostic sessions afterward. Keep the
+same host/status/timing-only logging boundary.
+
+In one observed failure, worker uploads selected `tos-nc2-slb1.douyin.com` and
+`tos-nc2-slb2.douyin.com`, while page requests used different media hosts. Chunk
+POSTs on the direct route were canceled at about 60 seconds. Adding those exact
+observed hosts to the temporary relay allowed the unchanged package to finish.
+Derive the allowlist from the current upload, not a previous video's host list.
+A quick TLS handshake or a fast initial progress estimate does not qualify the
+route: require native upload completion and the separate publication receipt.
+
 ## Optional, explicitly scoped transport recovery
 
 When the direct media route demonstrably stalls and an already-authorized SSH
