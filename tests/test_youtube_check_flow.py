@@ -149,6 +149,40 @@ class PublishFlowTests(unittest.TestCase):
         with self.assertRaises(pub_y2b.YouTubePublishPendingException):
             self.publisher.verify_published_in_studio()
 
+    def test_hidden_current_receipt_requires_matching_public_metadata(self):
+        self.publisher._upload_started = True
+        self.driver.execute_script.side_effect = ['', {
+            'activeVideoId': 'ABCdef12345',
+            'text': 'Video published\nReviewed title\nhttps://youtube.com/shorts/ABCdef12345',
+        }]
+        with patch.object(pub_y2b.requests, 'get') as get:
+            get.return_value.status_code = 200
+            get.return_value.json.return_value = {'title': 'Reviewed title'}
+            self.assertTrue(self.publisher.verify_published_in_studio())
+            self.assertIn('ABCdef12345', get.call_args.kwargs['params']['url'])
+
+    def test_stale_hidden_receipt_does_not_trigger_public_probe(self):
+        self.publisher._upload_started = True
+        self.driver.execute_script.side_effect = ['', {
+            'activeVideoId': 'NEWdef12345',
+            'text': 'Video published\nReviewed title\nhttps://youtube.com/shorts/OLDdef12345',
+        }]
+        with patch.object(pub_y2b.requests, 'get') as get:
+            with self.assertRaises(pub_y2b.YouTubePublishPendingException):
+                self.publisher.verify_published_in_studio()
+            get.assert_not_called()
+
+    def test_private_video_is_not_accepted_from_hidden_receipt(self):
+        self.publisher._upload_started = True
+        self.driver.execute_script.side_effect = ['', {
+            'activeVideoId': 'ABCdef12345',
+            'text': 'Video published\nReviewed title\nhttps://youtube.com/shorts/ABCdef12345',
+        }]
+        with patch.object(pub_y2b.requests, 'get') as get:
+            get.return_value.status_code = 401
+            with self.assertRaises(pub_y2b.YouTubePublishPendingException):
+                self.publisher.verify_published_in_studio()
+
     def test_failure_after_attachment_never_reuploads(self):
         def attach_then_fail():
             self.publisher._upload_started = True

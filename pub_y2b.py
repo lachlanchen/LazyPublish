@@ -2,6 +2,7 @@ import time
 import json
 import os
 import re
+import requests
 from pathlib import Path
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -172,6 +173,11 @@ class YouTubePublisher:
 
     def _close_completed_publication(self):
         """Close only a proven success receipt, never an unfinished upload."""
+        public_receipt = self._hidden_public_receipt_result()
+        if public_receipt:
+            self.driver.get(self._studio_content_url())
+            print("Returned to Studio after reconciling the public upload receipt.")
+            return True
         result = self.driver.execute_script(r"""
             const dialogs = [...document.querySelectorAll(
                 'ytcp-video-share-dialog tp-yt-paper-dialog')];
@@ -782,7 +788,7 @@ return backdrops.length;
         except Exception:
             return None
         if "Video published" not in text and "视频已发布" not in text:
-            return None
+            return self._hidden_public_receipt_result()
         title = self.create_video_title_with_limited_tags(self.metadata)
         if title and title not in text:
             return None
@@ -794,6 +800,54 @@ return backdrops.length;
             "video_id": match.group(1),
             "url": url_match.group(0) if url_match else match.group(0),
         }
+
+    def _hidden_public_receipt_result(self):
+        """Reconcile a completed receipt hidden by Studio's save transition.
+
+        Require the current upload ID, matching native receipt and independent
+        public metadata. A stale hidden dialog or a private draft is insufficient.
+        """
+        if not self._upload_started:
+            return None
+        try:
+            snapshot = self.driver.execute_script(r"""
+                const root = document.querySelector('ytcp-uploads-dialog');
+                return {activeVideoId: root ? root.getAttribute('video-id') : '',
+                    text: [...document.querySelectorAll(
+                        'ytcp-video-share-dialog tp-yt-paper-dialog')]
+                        .map(e => e.innerText || '').join('\n')};
+            """)
+            if not isinstance(snapshot, dict):
+                return None
+            video_id = snapshot.get("activeVideoId") or ""
+            text = snapshot.get("text") or ""
+            title = self.create_video_title_with_limited_tags(self.metadata)
+            if (not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id)
+                    or not title or title not in text
+                    or not any(label in text for label in ("Video published", "视频已发布"))):
+                return None
+            links = re.findall(
+                r"https://(?:www\.)?youtube\.com/(?:shorts/|watch\?v=)([A-Za-z0-9_-]{11})(?![A-Za-z0-9_-])",
+                text,
+            )
+            if video_id not in links:
+                return None
+            previous = getattr(self, "_public_receipt_cache", None)
+            if previous and previous[0] == video_id and time.monotonic() - previous[1] < 10:
+                return previous[2]
+            response = requests.get(
+                "https://www.youtube.com/oembed",
+                params={"url": f"https://www.youtube.com/watch?v={video_id}", "format": "json"},
+                timeout=10,
+            )
+            result = None
+            if response.status_code == 200 and response.json().get("title") == title:
+                result = {"video_id": video_id, "url": f"https://youtube.com/shorts/{video_id}",
+                          "source": "native_receipt_and_public_oembed"}
+            self._public_receipt_cache = (video_id, time.monotonic(), result)
+            return result
+        except (requests.RequestException, ValueError, TypeError):
+            return None
 
     def verify_published_in_studio(self):
         dialog_result = self._published_dialog_result()
