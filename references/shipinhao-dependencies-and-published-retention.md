@@ -13,6 +13,14 @@ The selector now clicks once and preserves an open menu across asynchronous
 render polls. Live verification selected Japanese and read it back on the next
 poll. Do not report missing platform support from a failed selector alone.
 
+WeUI can disable a button with `weui-desktop-btn_disabled` while leaving the
+HTML `disabled` property false. Readiness, draft and publish checks must recognize
+that class suffix; JavaScript `\bdisabled\b` misses it because underscore is a
+word character. The shared video scripts now recognize standalone, hyphen and
+underscore disabled-class tokens. Regression:
+`python -m unittest tests.test_shipinhao_disabled_buttons -v` (Node, no browser).
+An enabled-looking HTML property alone never proves upload/cover readiness.
+
 ## Verified Public Dependency Cache
 
 `browser_asset_cache.py` optionally reads

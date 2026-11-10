@@ -372,7 +372,7 @@ function isVisible(el) {
 function isDisabled(el) {
   if (!el) return true;
   const className = (el.className || '').toString();
-  return !!el.disabled || el.getAttribute('disabled') !== null || /\bdisabled\b/.test(className);
+  return !!el.disabled || el.getAttribute('disabled') !== null || /(?:^|[\s_-])disabled(?:$|\s)/.test(className);
 }
 
 function findButton(label) {
@@ -427,7 +427,7 @@ CONTENT_FRAME_DRAFT_BUTTON_STATE_SCRIPT = r"""
 function isDisabled(el) {
   if (!el) return true;
   const className = (el.className || '').toString();
-  return !!el.disabled || el.getAttribute('disabled') !== null || /\bdisabled\b/.test(className);
+  return !!el.disabled || el.getAttribute('disabled') !== null || /(?:^|[\s_-])disabled(?:$|\s)/.test(className);
 }
 
 const draftButton = Array.from(document.querySelectorAll('button')).find((el) => {
@@ -562,7 +562,7 @@ CONTENT_FRAME_PUBLISH_BUTTON_STATE_SCRIPT = r"""
 function isDisabled(el) {
   if (!el) return true;
   const className = (el.className || '').toString();
-  return !!el.disabled || el.getAttribute('disabled') !== null || /\bdisabled\b/.test(className);
+  return !!el.disabled || el.getAttribute('disabled') !== null || /(?:^|[\s_-])disabled(?:$|\s)/.test(className);
 }
 
 const publishButton = Array.from(document.querySelectorAll('button')).find((el) => {
