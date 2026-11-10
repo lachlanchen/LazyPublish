@@ -21,6 +21,23 @@ underscore disabled-class tokens. Regression:
 `python -m unittest tests.test_shipinhao_disabled_buttons -v` (Node, no browser).
 An enabled-looking HTML property alone never proves upload/cover readiness.
 
+Shipinhao's current management UI renders the video list in a same-origin
+iframe. The shared verifier now collects visible frame content and ignores
+CSS/script text in shadow roots; it refreshes a stale management list on retry.
+After any publish-click attempt, an uncertain acknowledgment or verification
+failure stops the publisher instead of recursively uploading and posting again.
+Reconcile the existing post/draft before a scoped recovery. Pre-submission
+page failures retain the bounded retry. Regressions:
+
+```sh
+python -m unittest tests.test_shipinhao_submission_retry -v
+python -m unittest tests.test_publish_verification_frames -v
+```
+
+The frame tests use a temporary headless Playwright browser and close it after
+the checks. They verify native visible iframe receipts, hidden-frame exclusion,
+and that stylesheet text cannot masquerade as a publication receipt.
+
 ## Verified Public Dependency Cache
 
 `browser_asset_cache.py` optionally reads

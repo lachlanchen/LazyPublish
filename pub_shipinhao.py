@@ -1333,6 +1333,7 @@ class ShiPinHaoPublisher:
     
     def publish(self):
         if self.retry_count < 3:  # maximum 3 tries (initial + 2 retries)
+            submission_attempted = False
             try:
                 driver = self.driver
                 video_path = self.video_path
@@ -1529,6 +1530,10 @@ class ShiPinHaoPublisher:
                 if user_input == 'yes':
                     publish_state = wait_for_publish_button_ready(driver, duration=30)
                     print(f"Shipinhao publish button ready: {publish_state}")
+                    # A click can reach the server even if the acknowledgment
+                    # or management verification fails. Never reupload/repost
+                    # that uncertain submission in the outer retry loop.
+                    submission_attempted = True
                     click_content_frame_css(
                         driver,
                         "button",
@@ -1556,6 +1561,11 @@ class ShiPinHaoPublisher:
                 print(f"An error occurred: {e}")
                 traceback.print_exc()
                 save_debug_snapshot(driver, f"publish_attempt_{self.retry_count + 1}")
+                if submission_attempted:
+                    raise RuntimeError(
+                        "Shipinhao submission outcome is uncertain; reconcile "
+                        "the existing post before any retry"
+                    ) from e
                 self.retry_count += 1
                 if self.retry_count >= 3:
                     message = "Maximum retry attempts reached. Process failed."

@@ -18,18 +18,39 @@ function collectShadowText(root, depth, out) {
   if (!root || depth > 8 || !root.querySelectorAll) return out;
   for (const el of root.querySelectorAll('*')) {
     if (!el.shadowRoot) continue;
-    const text = norm(el.shadowRoot.innerText || el.shadowRoot.textContent || '');
-    if (text) out.push(text);
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') continue;
+    for (const child of el.shadowRoot.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const text = norm(child.textContent);
+        if (text) out.push(text);
+      } else if (child.nodeType === Node.ELEMENT_NODE
+                 && !['STYLE', 'SCRIPT', 'NOSCRIPT'].includes(child.tagName)) {
+        const text = norm(child.innerText || '');
+        if (text) out.push(text);
+      }
+    }
     collectShadowText(el.shadowRoot, depth + 1, out);
   }
   return out;
 }
 const out = [];
-const bodyText = norm(document.body ? document.body.innerText : '');
-if (bodyText) out.push(bodyText);
-const rootText = norm(document.documentElement ? document.documentElement.innerText : '');
-if (rootText && rootText !== bodyText) out.push(rootText);
-collectShadowText(document, 0, out);
+const seen = new Set();
+function collectDocument(doc, depth) {
+  if (!doc || depth > 8 || seen.has(doc)) return;
+  seen.add(doc);
+  const text = norm(doc.body ? doc.body.innerText : '');
+  if (text) out.push(text);
+  collectShadowText(doc, 0, out);
+  for (const frame of doc.querySelectorAll('iframe, frame')) {
+    const style = frame.ownerDocument.defaultView.getComputedStyle(frame);
+    if (style.display === 'none' || style.visibility === 'hidden'
+        || !frame.getClientRects().length) continue;
+    try { collectDocument(frame.contentDocument, depth + 1); }
+    catch (_) { /* Cross-origin frames are not readable from this context. */ }
+  }
+}
+collectDocument(document, 0);
 return Array.from(new Set(out.filter(Boolean))).join('\n');
 """
 
@@ -239,7 +260,7 @@ def verify_publish_in_management(
         # safe_get deliberately skips same-route navigation. A SPA can keep
         # yesterday's content list after accepting today's upload; refresh the
         # management page on a verification retry, never resubmit the post.
-        if pass_number and platform_name.lower() == "douyin":
+        if pass_number and platform_name.lower() in {"douyin", "shipinhao"}:
             try:
                 driver.refresh()
                 print(f"{platform_name} refreshed stale management listing for verification.")
