@@ -2,6 +2,8 @@ import asyncio
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
+from scripts import media_upload_relay as relay_module
 from scripts.media_upload_relay import handle, pac, parse_target
 
 
@@ -65,6 +67,45 @@ class RelayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b'403 Forbidden', await r.read())
         w.close()
         await w.wait_closed()
+
+    async def test_one_way_upload_keeps_tunnel_alive_until_server_replies(self):
+        self.upstream.close()
+        await self.upstream.wait_closed()
+        async def delayed_reply(reader, writer):
+            try:
+                await reader.readexactly(6)
+                writer.write(b'ok')
+                await writer.drain()
+            except asyncio.IncompleteReadError:
+                pass
+            finally:
+                writer.close()
+                await writer.wait_closed()
+        self.upstream = await asyncio.start_server(delayed_reply, '127.0.0.1', 0)
+        self.targets['media.example.test'] = self.upstream.sockets[0].getsockname()[1]
+        with patch.object(relay_module, 'IDLE_TIMEOUT_SECONDS', .08):
+            r, w = await self.request(b'CONNECT media.example.test:443 HTTP/1.1\r\n\r\n')
+            try:
+                await r.readuntil(b'\r\n\r\n')
+                for _ in range(6):
+                    w.write(b'x')
+                    await w.drain()
+                    await asyncio.sleep(.03)
+                self.assertEqual(await asyncio.wait_for(r.readexactly(2), 1), b'ok')
+            finally:
+                w.close()
+                try:
+                    await w.wait_closed()
+                except ConnectionError:
+                    pass
+
+    async def test_truly_idle_tunnel_is_still_closed(self):
+        with patch.object(relay_module, 'IDLE_TIMEOUT_SECONDS', .05):
+            r, w = await self.request(b'CONNECT media.example.test:443 HTTP/1.1\r\n\r\n')
+            await r.readuntil(b'\r\n\r\n')
+            self.assertEqual(await asyncio.wait_for(r.read(), 1), b'')
+            w.close()
+            await w.wait_closed()
 
     async def test_pac_available_without_exposing_other_paths(self):
         r, w = await self.request(b'GET /douyin-upload.pac HTTP/1.1\r\n\r\n')

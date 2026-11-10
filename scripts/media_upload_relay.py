@@ -9,6 +9,7 @@ import json
 import re
 
 MAX_CONNECTIONS = 32
+IDLE_TIMEOUT_SECONDS = 120
 
 
 def parse_target(authority, targets):
@@ -53,17 +54,34 @@ async def handle(reader, writer, targets, port):
         await writer.drain()
         print(json.dumps({'event': 'connect', 'host': host}), flush=True)
 
+        loop = asyncio.get_running_loop()
+        last_activity = loop.time()
+
         async def copy(source, destination):
+            nonlocal last_activity
             count = 0
-            while data := await asyncio.wait_for(source.read(65536), 120):
+            while data := await source.read(65536):
+                last_activity = loop.time()
                 destination.write(data)
                 await asyncio.wait_for(destination.drain(), 120)
+                last_activity = loop.time()
                 count += len(data)
             return count
 
+        async def watch_idle():
+            # An upload server may send nothing until the request body ends.
+            # A quiet reverse direction is healthy while bytes flow outward.
+            while True:
+                await asyncio.sleep(min(1, IDLE_TIMEOUT_SECONDS / 2))
+                if loop.time() - last_activity >= IDLE_TIMEOUT_SECONDS:
+                    raise asyncio.TimeoutError('tunnel inactive in both directions')
+
         tasks = [asyncio.create_task(copy(reader, upstream)),
-                 asyncio.create_task(copy(upstream_reader, writer))]
+                 asyncio.create_task(copy(upstream_reader, writer)),
+                 asyncio.create_task(watch_idle())]
         done, _ = await asyncio.wait(tasks, timeout=1800, return_when=asyncio.FIRST_COMPLETED)
+        if not done:
+            raise asyncio.TimeoutError('tunnel lifetime exceeded')
         for task in done:
             task.result()
         print(json.dumps({'event': 'closed', 'host': host}), flush=True)

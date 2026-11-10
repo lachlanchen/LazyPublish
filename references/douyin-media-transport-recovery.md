@@ -81,6 +81,15 @@ HTTP 503 and a `capacity_rejected` log entry. A loopback regression opens 32
 opaque TLS-style streams, verifies byte transport, and checks the overflow bound.
 This fixes relay capacity; it does not prove the cause of a native upload failure.
 
+Idle timeout is now shared across both directions. A media server may wait for
+the complete POST body before returning anything; timing out its quiet response
+direction after 120 seconds can cancel a healthy, still-progressing upload.
+Either-direction byte activity now keeps the tunnel alive. Truly idle tunnels,
+blocked drains, the 30-minute lifetime and the 32-connection cap remain bounded.
+A loopback regression reproduced the old false disconnect during a slow one-way
+upload; that scenario and a truly idle tunnel now pass (nine relay tests total).
+This fixes a transport failure mode, not every possible CDN or native failure.
+
 ## Distinct editions and YouTube drafts
 
 A same-title private draft can contain another edition of the media. Before
