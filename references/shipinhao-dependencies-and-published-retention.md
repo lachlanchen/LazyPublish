@@ -44,6 +44,11 @@ click and refuses class-disabled controls. The same browser suite verifies the
 single-click event count and the disabled-button boundary. This does not make
 a click a successful post: the separate native management receipt is required.
 
+After submitting, wait for native success navigation/toast before opening
+management. An explicit rejection is reported with its message; absent an
+acknowledgment, preserve the existing editor for diagnosis. Navigating away
+after a fixed sleep can hide validation errors and discard a recoverable upload.
+
 ## Verified Public Dependency Cache
 
 `browser_asset_cache.py` optionally reads

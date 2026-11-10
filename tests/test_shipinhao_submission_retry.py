@@ -2,6 +2,7 @@
 import ast
 from pathlib import Path
 from types import SimpleNamespace
+import re
 import unittest
 from unittest.mock import Mock
 
@@ -16,7 +17,7 @@ def publisher_fixture():
                'ensure_content_frame_input_value', 'wait_for_cover_ready',
                'ensure_content_frame_checkbox_value', 'click_content_frame_css',
                'click_content_frame_draft_if_available', 'wait_for_publish_button_ready',
-               'verify_publish_in_management', 'save_debug_snapshot']
+               'verify_publish_in_management', 'save_debug_snapshot', 'wait_for_submission_outcome']
     scope = {name: Mock(return_value=True) for name in helpers}
     scope.update(time=SimpleNamespace(sleep=Mock(), time=Mock(return_value=0)),
                  os=SimpleNamespace(environ={}), traceback=SimpleNamespace(print_exc=Mock()),
@@ -68,6 +69,36 @@ class SubmissionRetryTests(unittest.TestCase):
         self.assertEqual(publisher.driver.get.call_count, 2)
         self.assertEqual(scope['send_file_to_content_frame'].call_count, 1)
         self.assertEqual(scope['verify_publish_in_management'].call_count, 1)
+
+
+class SubmissionAcknowledgmentTests(unittest.TestCase):
+    def fixture(self, times, messages):
+        source = Path(__file__).resolve().parents[1] / 'pub_shipinhao.py'
+        method = next(n for n in ast.parse(source.read_text()).body
+                      if isinstance(n, ast.FunctionDef) and n.name == 'wait_for_submission_outcome')
+        scope = dict(re=re, time=SimpleNamespace(monotonic=Mock(side_effect=times), sleep=Mock()),
+                     _execute_in_content_frame=Mock(return_value=messages))
+        exec(compile(ast.Module(body=[method], type_ignores=[]), '<acknowledgment>', 'exec'), scope)
+        driver = Mock(current_url='https://channels.weixin.qq.com/platform/post/create')
+        return driver, scope
+
+    def test_explicit_rejection_is_reported_without_leaving_editor(self):
+        driver, scope = self.fixture([0, 0], ['短标题包含不支持的特殊字符'])
+        with self.assertRaisesRegex(RuntimeError, '特殊字符'):
+            scope['wait_for_submission_outcome'](driver)
+        driver.get.assert_not_called()
+
+    def test_timeout_preserves_editor_instead_of_navigating_to_management(self):
+        driver, scope = self.fixture([0, 0, 100], [])
+        with self.assertRaisesRegex(RuntimeError, 'preserving the editor'):
+            scope['wait_for_submission_outcome'](driver)
+        driver.get.assert_not_called()
+
+    def test_native_success_navigation_is_accepted(self):
+        driver, scope = self.fixture([0, 0], [])
+        driver.current_url = 'https://channels.weixin.qq.com/platform/post/list'
+        self.assertTrue(scope['wait_for_submission_outcome'](driver))
+        scope['_execute_in_content_frame'].assert_not_called()
 
 
 if __name__ == '__main__':

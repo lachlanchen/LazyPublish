@@ -858,6 +858,31 @@ def click_content_frame_draft_if_available(driver, duration=90):
     )
 
 
+def wait_for_submission_outcome(driver, duration=90):
+    """Keep the submitted editor intact until the site acknowledges it."""
+    deadline = time.monotonic() + duration
+    while time.monotonic() < deadline:
+        if "/platform/post/list" in (driver.current_url or ""):
+            return True
+        state = _execute_in_content_frame(driver, r"""
+            const visible = e => e.checkVisibility({visibilityProperty: true});
+            return [...document.querySelectorAll(
+                '[role="alert"], .ant-message-notice-content, .weui-desktop-toast, '
+                + '.weui-desktop-form__tips_error, .ant-form-item-explain-error')]
+                .filter(visible).map(e => (e.innerText || '').trim()).filter(Boolean);
+        """)
+        if isinstance(state, list):
+            for message in state:
+                if re.search(r"特殊字符|不支持|不允许|发表失败|发布失败|保存失败|上传失败|不符合", message):
+                    raise RuntimeError("Shipinhao rejected submission: " + message[:240])
+                if re.search(r"发表成功|发布成功|已发表|已发布", message):
+                    return True
+        time.sleep(2)
+    raise RuntimeError(
+        "Shipinhao did not acknowledge submission; preserving the editor for reconciliation"
+    )
+
+
 def _indicator_present_in_content_frame(driver, xpath):
     if not _switch_to_content_frame(driver):
         return False
@@ -1545,7 +1570,7 @@ class ShiPinHaoPublisher:
                         text="发表",
                         exact=True,
                     )
-                    time.sleep(10)
+                    wait_for_submission_outcome(driver)
                     verify_publish_in_management(
                         driver,
                         SHIPINHAO_MANAGEMENT_URL,
