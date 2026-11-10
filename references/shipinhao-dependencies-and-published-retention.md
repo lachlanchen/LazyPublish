@@ -38,6 +38,12 @@ The frame tests use a temporary headless Playwright browser and close it after
 the checks. They verify native visible iframe receipts, hidden-frame exclusion,
 and that stylesheet text cannot masquerade as a publication receipt.
 
+The shared content-frame click helper previously called both `element.click()`
+and a synthetic click, firing the same control twice. It now dispatches one
+click and refuses class-disabled controls. The same browser suite verifies the
+single-click event count and the disabled-button boundary. This does not make
+a click a successful post: the separate native management receipt is required.
+
 ## Verified Public Dependency Cache
 
 `browser_asset_cache.py` optionally reads

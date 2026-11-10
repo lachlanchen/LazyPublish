@@ -14,6 +14,10 @@ class ManagementFrameTests(unittest.TestCase):
                           if isinstance(n, ast.Assign)
                           and isinstance(n.targets[0], ast.Name)
                           and n.targets[0].id == 'COLLECT_TEXT_SCRIPT')
+        publisher = source.with_name('pub_shipinhao.py')
+        cls.click_script = next(ast.literal_eval(n.value) for n in ast.parse(publisher.read_text()).body
+                                if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name)
+                                and n.targets[0].id == 'CONTENT_FRAME_CLICK_SCRIPT')
         cls.runtime = sync_playwright().start()
         cls.browser = cls.runtime.chromium.launch(headless=True)
 
@@ -44,6 +48,17 @@ class ManagementFrameTests(unittest.TestCase):
           '<style>/* Fake receipt */</style><p>Actual receipt</p>';''')
         self.assertIn('Actual receipt', self.text())
         self.assertNotIn('Fake receipt', self.text())
+
+    def test_content_button_dispatches_exactly_one_click(self):
+        self.page.set_content('<button onclick="window.clicks=(window.clicks||0)+1">发表</button>')
+        clicked = self.page.evaluate('(s) => Function(s)("button", "发表", true, true)', self.click_script)
+        self.assertTrue(clicked)
+        self.assertEqual(self.page.evaluate('window.clicks'), 1)
+
+    def test_class_disabled_content_button_is_not_clicked(self):
+        self.page.set_content('<button class="weui-desktop-btn_disabled" onclick="window.clicked=true">发表</button>')
+        self.assertFalse(self.page.evaluate('(s) => Function(s)("button", "发表", true, true)', self.click_script))
+        self.assertFalse(self.page.evaluate('!!window.clicked'))
 
 
 if __name__ == '__main__':

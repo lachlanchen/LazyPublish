@@ -253,14 +253,18 @@ const match = Array.from(document.querySelectorAll(selector)).find(
   (el) => (!requireVisible || isVisible(el)) && textMatches(el, expectedText)
 );
 if (!match) return false;
+if (match.disabled || match.getAttribute('disabled') !== null
+    || match.getAttribute('aria-disabled') === 'true'
+    || /(?:^|[\s_-])disabled(?:$|\s)/.test((match.className || '').toString())) return false;
 match.scrollIntoView({block: 'center'});
 match.dispatchEvent(new MouseEvent('mouseover', {bubbles: true, cancelable: true, view: window}));
 match.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, view: window}));
+match.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, view: window}));
 if (typeof match.click === 'function') {
   match.click();
+} else {
+  match.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
 }
-match.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, view: window}));
-match.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
 return true;
 """
 
