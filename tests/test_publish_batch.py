@@ -2,10 +2,27 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from publish_batch import publish_batch
+from publish_batch import PublisherFactory, publish_batch
 
 
 class PublishBatchTests(unittest.TestCase):
+    def test_setup_failure_is_recorded_and_next_platform_still_publishes(self):
+        failed = Mock(side_effect=RuntimeError("network error before upload"))
+        second = SimpleNamespace(publication_receipt=None)
+        create_second = Mock(return_value=second)
+        publish, record = Mock(return_value=True), Mock()
+        with self.assertRaisesRegex(RuntimeError, "retry only failed targets: Douyin"):
+            publish_batch([(PublisherFactory(failed), "Douyin"),
+                           (PublisherFactory(create_second), "ShiPinHao")],
+                          publish, on_result=record)
+        publish.assert_called_once_with(second, "ShiPinHao")
+        failed.assert_called_once_with()
+        create_second.assert_called_once_with()
+        self.assertEqual(record.call_args_list[1].args,
+                         ("Douyin", {"status": "failed", "error": "network error before upload"}))
+        self.assertEqual(record.call_args_list[-1].args,
+                         ("ShiPinHao", {"status": "done", "error": None}))
+
     def test_moderation_receipt_is_kept_separate_from_done(self):
         p = SimpleNamespace(publication_receipt={"publication_state": "review_pending", "retry_safe": False})
         result = publish_batch([(p, "Douyin")], lambda *_: True)

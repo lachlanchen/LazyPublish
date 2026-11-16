@@ -37,12 +37,17 @@ def management_receipt(cards, title, description, submitted_at):
     }
 
 
-def publish_options(content_label="", resume_sha256=""):
+def publish_options(content_label="", resume_sha256="", skip_login=False):
     if content_label not in {"", "ai_generated"}:
         raise ValueError("Unsupported Douyin content label")
     if resume_sha256 and not re.fullmatch(r"[a-f0-9]{64}", resume_sha256):
         raise ValueError("Douyin resume requires the reviewed media SHA-256")
-    return {"content_label": content_label, "resume_sha256": resume_sha256}
+    if not isinstance(skip_login, bool):
+        raise ValueError("Douyin skip_login must be boolean")
+    options = {"content_label": content_label, "resume_sha256": resume_sha256}
+    if skip_login:
+        options["skip_login"] = True
+    return options
 
 
 def upload_gate(text):

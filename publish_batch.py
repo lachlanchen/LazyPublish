@@ -1,12 +1,21 @@
 """Finish independent targets, preserving partial success for scoped retries."""
 
 
+class PublisherFactory:
+    """Defer browser/login setup until its target is inside the failure boundary."""
+
+    def __init__(self, create):
+        self.create = create
+
+
 def publish_batch(publishers, publish, *, before_each=None, on_result=None):
     results = {}
     for publisher, name in publishers:
         if on_result:
             on_result(name, {"status": "running"})
         try:
+            if isinstance(publisher, PublisherFactory):
+                publisher = publisher.create()
             if before_each:
                 before_each(name)
             if publish(publisher, name) is False:

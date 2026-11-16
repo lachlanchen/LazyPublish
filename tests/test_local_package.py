@@ -157,6 +157,13 @@ class TestLocalPackageEndpoint(tornado.testing.AsyncHTTPTestCase):
             assert not self.jobs
             assert not list(self.root.rglob('*.zip'))
 
+    def test_skip_douyin_login_is_an_explicit_one_job_option(self):
+        response = self.fetch('/publish?' + urlencode({
+            'filename': 'video.zip', 'publish_douyin': 'true', 'douyin_skip_login': 'true',
+        }), method='POST', body=valid_zip())
+        assert response.code == 200
+        assert self.jobs[0]['douyin_options']['skip_login'] is True
+
     def test_malformed_retry_is_400_without_overwriting_or_queueing(self):
         package = self.root / 'publisher' / 'video' / 'video.zip'
         package.parent.mkdir(parents=True)

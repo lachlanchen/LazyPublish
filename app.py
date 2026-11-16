@@ -47,7 +47,7 @@ import threading
 import time
 import random
 from queue_journal import QueueJournal
-from publish_batch import publish_batch
+from publish_batch import PublisherFactory, publish_batch
 from publish_package import extracted_members_current, store_publish_package, validate_archive
 from local_package import resolve_package, checksum, clean_scratch
 from published_retention import cleanup_published
@@ -950,57 +950,57 @@ def _process_publish_job(job):
 
     publishers = []
     if publish_xhs:
-        pub_xhslisher = XiaoHongShuPublisher(_driver_for("XiaoHongShu", 5003), path_mp4, path_cover, metadata_china, test_mode)
+        pub_xhslisher = PublisherFactory(lambda: XiaoHongShuPublisher(_driver_for("XiaoHongShu", 5003), path_mp4, path_cover, metadata_china, test_mode))
         publishers.append((pub_xhslisher, 'XiaoHongShu'))
     if publish_douyin:
         douyin_metadata = {**metadata_china, "_douyin_options": douyin_publish_options(**job.get("douyin_options", {}))}
-        pub_douyinlisher = DouyinPublisher(_driver_for("Douyin", 5004), path_mp4, path_cover, douyin_metadata, test_mode)
+        pub_douyinlisher = PublisherFactory(lambda: DouyinPublisher(_driver_for("Douyin", 5004), path_mp4, path_cover, douyin_metadata, test_mode))
         publishers.append((pub_douyinlisher, 'Douyin'))
     if publish_bilibili:
-        pub_bilibililisher = BilibiliPublisher(_driver_for("Bilibili", 5005), path_mp4, path_cover, metadata_china, test_mode)
+        pub_bilibililisher = PublisherFactory(lambda: BilibiliPublisher(_driver_for("Bilibili", 5005), path_mp4, path_cover, metadata_china, test_mode))
         publishers.append((pub_bilibililisher, 'Bilibili'))
     if publish_shipinhao:
-        pub_shipinhaolisher = ShiPinHaoPublisher(
+        pub_shipinhaolisher = PublisherFactory(lambda: ShiPinHaoPublisher(
             _driver_for("ShiPinHao", 5006),
             path_mp4,
             path_cover,
             metadata_china,
             test_mode,
             attention_callback=_job_attention_callback(job["id"]),
-        )
+        ))
         publishers.append((pub_shipinhaolisher, 'ShiPinHao'))
     if publish_shipinhao_music:
-        pub_shipinhao_music = ShiPinHaoMusicPublisher(
+        pub_shipinhao_music = PublisherFactory(lambda: ShiPinHaoMusicPublisher(
             _driver_for("ShiPinHaoMusic", 5006),
             path_music,
             path_cover,
             metadata,
             test_mode,
-        )
+        ))
         publishers.append((pub_shipinhao_music, 'ShiPinHaoMusic'))
     if publish_youtube_music:
-        pub_youtube_music = YouTubeMusicPublisher(
+        pub_youtube_music = PublisherFactory(lambda: YouTubeMusicPublisher(
             _driver_for("YouTubeMusic", 9222),
             path_youtube_music_video,
             path_cover,
             metadata_en,
             test_mode,
-        )
+        ))
         publishers.append((pub_youtube_music, 'YouTubeMusic'))
     if publish_bandcamp_music:
-        pub_bandcamp_music = BandcampMusicPublisher(
+        pub_bandcamp_music = PublisherFactory(lambda: BandcampMusicPublisher(
             _driver_for("BandcampMusic", 5008),
             path_bandcamp_music,
             path_cover,
             metadata_en,
             test_mode,
-        )
+        ))
         publishers.append((pub_bandcamp_music, 'BandcampMusic'))
     if publish_instagram:
-        pub_instagramlisher = InstagramPublisher(_driver_for("Instagram", 5007), path_mp4, path_cover, metadata, test_mode)
+        pub_instagramlisher = PublisherFactory(lambda: InstagramPublisher(_driver_for("Instagram", 5007), path_mp4, path_cover, metadata, test_mode))
         publishers.append((pub_instagramlisher, 'Instagram'))
     if publish_y2b:
-        pub_y2blisher = YouTubePublisher(_driver_for("YouTube", 9222), path_mp4, path_cover, metadata_en, test_mode)
+        pub_y2blisher = PublisherFactory(lambda: YouTubePublisher(_driver_for("YouTube", 9222), path_mp4, path_cover, metadata_en, test_mode))
         publishers.append((pub_y2blisher, 'YouTube'))
 
     def focus_platform(name):
@@ -1202,6 +1202,7 @@ class PublishHandler(tornado.web.RequestHandler):
             douyin_options = douyin_publish_options(
                 self.get_argument('douyin_content_label', ''),
                 self.get_argument('douyin_resume_sha256', ''),
+                skip_login=_parse_bool_arg(self.get_argument('douyin_skip_login', 'false')),
             )
         except ValueError as exc:
             raise tornado.web.HTTPError(400, str(exc))

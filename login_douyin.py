@@ -130,6 +130,25 @@ class DouyinLogin:
             content="Could not detect the expected Douyin login UI. Please check the page layout.",
         )
 
+    def recover_network_error(self, url):
+        """Reload a failed SPA before attempting login or sending a QR email."""
+        for attempt in range(3):
+            text = self.driver.execute_script(
+                "return document.body ? document.body.innerText : '';"
+            ) or ""
+            if not any(marker in text for marker in (
+                "网络请求错误", "Network request error",
+            )):
+                return
+            if attempt == 2:
+                raise RuntimeError(
+                    "Douyin page network error persisted after 2 reloads; "
+                    "login state is unknown and no upload was attempted."
+                )
+            print(f"Douyin page network error; reloading same page ({attempt + 1}/2).")
+            safe_get(self.driver, url, timeout=45, label="Douyin network recovery")
+            time.sleep(3)
+
     def is_second_verify_visible(self):
         markers = [
             (By.CSS_SELECTOR, "#uc-second-verify"),
@@ -207,7 +226,7 @@ class DouyinLogin:
             return True
         return False
 
-    def check_and_act(self):
+    def check_and_act(self, *, allow_interactive_login=True):
         print("Navigating to the Douyin URL...")
         url = 'https://creator.douyin.com/creator-micro/content/upload'
         safe_get(self.driver, url, timeout=45, label="Douyin upload page")
@@ -220,10 +239,15 @@ class DouyinLogin:
 
         bring_to_front(["抖音"])
 
+        self.recover_network_error(url)
+
         print("Checking login status...")
         if self.is_already_logged_in():
             print("Already logged in.")
             return True
+
+        if not allow_interactive_login:
+            raise RuntimeError("Douyin login required; skipped by job option before QR or upload.")
 
         try:
             self.click_login_button()

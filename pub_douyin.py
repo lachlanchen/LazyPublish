@@ -56,7 +56,9 @@ class DouyinPublisher:
             print("Reusing the reviewed ready Douyin editor without navigating away.")
         else:
             douyin_login = DouyinLogin(driver)
-            douyin_login.check_and_act()
+            douyin_login.check_and_act(
+                allow_interactive_login=not self.metadata.get("_douyin_options", {}).get("skip_login", False)
+            )
 
     def _verified_editor(self):
         return (self._allow_draft_reuse()
