@@ -267,6 +267,9 @@ class YouTubePublisher:
                 expected_texts.extend(["Upload complete", "Processing up to", "Checking", "Checks complete. No issues found."])
             else:
                 expected_texts.extend(["complete", "Complete", "Processing up to", "Checking", "Checks complete. No issues found."])
+            # This is a server-side processing phase, also seen when resuming
+            # an already uploaded draft. It does not mean checks have passed.
+            expected_texts.append("Video processing is taking longer than expected.")
 
             error_text = "Daily upload limit reached"
             wait = WebDriverWait(self.driver, duration)  # Adjust total timeout as needed

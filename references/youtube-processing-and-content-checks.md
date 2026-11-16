@@ -6,6 +6,8 @@ The shared check interpreter now accepts those two native subcheck results toget
 
 The publisher still uses normal enabled navigation and publication controls and requires a native publication receipt. This does not bypass a disabled control, choose Publish anyway, or claim that HD processing has finished. If YouTube itself blocks publication, preserve the existing upload. Recovery must resume the matching open draft instead of attaching the media again.
 
+The upload-phase wait also recognizes the native processing-delay message as evidence that uploading has finished. Without that marker, resuming this saved draft could wait another 30 minutes for an `Upload complete` footer that Studio had already replaced. This advances only the upload-phase wait; the separate content-check and publication-receipt requirements still apply.
+
 Validation:
 
 ```sh

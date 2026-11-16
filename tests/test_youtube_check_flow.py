@@ -77,6 +77,14 @@ class PublishFlowTests(unittest.TestCase):
             self.assertTrue(self.publisher.wait_for_checks())
             self.assertEqual(snapshot.call_count, 2)
 
+    def test_uploaded_draft_processing_delay_does_not_wait_for_upload_again(self):
+        self.driver.execute_script.return_value = "Video processing is taking longer than expected. Please wait."
+        self.driver.find_elements.return_value = []
+        with patch.object(pub_y2b.time, "sleep") as sleep:
+            self.publisher.wait_for_processing(mode="upload", duration=1)
+        sleep.assert_not_called()
+        self.driver.get.assert_not_called()
+
     @unittest.skipUnless(shutil.which("node"), "Node is required to validate embedded JavaScript")
     def test_embedded_javascript_is_syntactically_valid(self):
         tree = ast.parse(Path(pub_y2b.__file__).read_text())
