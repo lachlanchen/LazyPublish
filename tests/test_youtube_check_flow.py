@@ -28,6 +28,29 @@ class CheckStatusTests(unittest.TestCase):
     def test_complete_without_issues(self):
         self.assertEqual(checks_outcome("Checks complete. No issues found."), "complete")
 
+    def test_completed_subchecks_are_not_hidden_by_hd_processing_footer(self):
+        details = "Initial check\nCopyright\nNo issues found\nCommunity Guidelines\nNo issues found\nNext"
+        for progress in ("Processing up to HD ... Almost done",
+                         "Video processing is taking longer than expected. Please wait."):
+            with self.subTest(progress=progress):
+                self.assertEqual(checks_outcome(progress, details), "complete")
+
+    def test_processing_footer_and_one_clear_subcheck_stay_pending(self):
+        details = "Copyright\nChecking\nCommunity Guidelines\nNo issues found"
+        self.assertEqual(checks_outcome("Processing up to HD", details), "pending")
+
+    def test_two_generic_success_labels_are_not_subcheck_receipts(self):
+        self.assertEqual(checks_outcome("Processing up to HD",
+                                       "No issues found\nNo issues found\nNext"), "pending")
+
+    def test_active_checking_footer_wins_over_subcheck_text(self):
+        details = "Copyright\nNo issues found\nCommunity Guidelines\nNo issues found"
+        self.assertEqual(checks_outcome("Checking 3%", details), "pending")
+
+    def test_warning_wins_over_completed_subchecks_and_processing(self):
+        details = "Copyright\nNo issues found\nCommunity Guidelines\nNo issues found"
+        self.assertEqual(checks_outcome("Processing up to HD", details, warning=True), "pending")
+
     def test_warning_wins_over_stale_complete_footer(self):
         self.assertEqual(checks_outcome("Checks complete. No issues found.", warning=True), "pending")
 
