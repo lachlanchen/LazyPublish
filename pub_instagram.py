@@ -13,6 +13,7 @@ from selenium.common.exceptions import TimeoutException, ElementClickIntercepted
 
 from utils import dismiss_alert, bring_to_front, close_extra_tabs
 from login_instagram import InstagramLogin
+from instagram_account_attention import InstagramAccountAttentionError, require_instagram_account_ready
 from instagram_caption import build_instagram_caption
 from instagram_caption_input import (
     InstagramCaptionError, enter_verified_caption, rendered_caption_matches,
@@ -545,6 +546,7 @@ class InstagramPublisher:
     def _wait_for_publish_complete(self, timeout=600):
         start_time = time.time()
         while time.time() - start_time < timeout:
+            require_instagram_account_ready(self.driver)
             self._dismiss_reels_dialog(timeout=2)
             if self._publish_success_present():
                 return True
@@ -567,6 +569,7 @@ class InstagramPublisher:
 
         try:
             driver = self.driver
+            require_instagram_account_ready(driver)
             print("Starting the publishing process on Instagram...")
             try:
                 print(f"Instagram desktop bounds: {fit_browser_window(driver)}")
@@ -574,6 +577,7 @@ class InstagramPublisher:
                 print(f"Could not normalize Instagram browser viewport: {exc}")
             driver.get("https://www.instagram.com/")
             time.sleep(2)
+            require_instagram_account_ready(driver)
             dismiss_alert(driver)
             time.sleep(2)
             bring_to_front(["Instagram"])
@@ -608,6 +612,7 @@ class InstagramPublisher:
             WebDriverWait(driver, 30).until(
                 lambda d: d.find_elements(By.XPATH, "//input[@type='file']")
             )
+            require_instagram_account_ready(driver)
             bring_to_front(["Instagram"])
             self._upload_video()
 
@@ -628,6 +633,7 @@ class InstagramPublisher:
 
             print("Clicking Share...")
             verify_editor_caption(driver, self._find_caption_editor, caption)
+            require_instagram_account_ready(driver)
             # A click may succeed even if the driver response is lost.
             share_clicked = True
             self._click_share_button()
@@ -644,9 +650,10 @@ class InstagramPublisher:
                 "Instagram post/caption could not be verified. Keep the existing post; "
                 f"do not reupload. Candidate URL: {self.published_post_url or 'unavailable'}"
             )
-        except InstagramCaptionError:
+        except (InstagramAccountAttentionError, InstagramCaptionError):
             raise
         except Exception as exc:
+            require_instagram_account_ready(self.driver)
             self.retry_count += 1
             print(f"Instagram publish failed: {exc}")
             traceback.print_exc()

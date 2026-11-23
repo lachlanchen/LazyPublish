@@ -85,7 +85,7 @@ class CaptionPersistenceTests(unittest.TestCase):
 class PublisherCaptionTests(unittest.TestCase):
     def make_publisher(self):
         publisher = pub_instagram.InstagramPublisher.__new__(pub_instagram.InstagramPublisher)
-        publisher.driver = MagicMock()
+        publisher.driver = MagicMock(current_url="https://www.instagram.com/")
         publisher.metadata = {"title": "JP EN ZH"}
         publisher.published_post_url = None
         return publisher

@@ -18,6 +18,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import SessionNotCreatedException
 
+from instagram_account_attention import require_instagram_account_ready
 from utils import SendMail, dismiss_alert, bring_to_front
 
 
@@ -389,9 +390,11 @@ class InstagramLogin:
 
     def check_and_act(self):
         driver = self.driver
+        require_instagram_account_ready(driver)
         print("Navigating to Instagram...")
         driver.get("https://www.instagram.com/")
         time.sleep(2)
+        require_instagram_account_ready(driver)
         dismiss_alert(driver)
         time.sleep(2)
         bring_to_front(["Instagram"])
@@ -408,6 +411,7 @@ class InstagramLogin:
         except Exception:
             print("Login form not detected yet.")
 
+        require_instagram_account_ready(driver)
         if self.is_already_logged_in():
             print("Instagram logged in after page load.")
             self.dismiss_save_info_prompt()
@@ -416,6 +420,7 @@ class InstagramLogin:
         if self.try_password_login():
             print("Submitted username/password. Waiting for login to complete.")
             time.sleep(5)
+            require_instagram_account_ready(driver)
             if self.is_already_logged_in():
                 print("Instagram login succeeded.")
                 self.dismiss_save_info_prompt()
@@ -429,6 +434,7 @@ class InstagramLogin:
 
         start_time = time.time()
         while time.time() - start_time < 600:
+            require_instagram_account_ready(driver)
             if self.is_already_logged_in():
                 print("Instagram login completed.")
                 self.dismiss_save_info_prompt()
